@@ -18,6 +18,16 @@ class NotFoundError(DomainError):
         super().__init__(code, message, 404)
 
 
+class BoundaryConflictError(ConflictError):
+    """同一管段已有进行中的隔离作业；另一方看到现用阀门与差异。"""
+
+    def __init__(self, message, current_valves, diff, job_id):
+        super().__init__("boundary_conflict", message)
+        self.current_valves = current_valves
+        self.diff = diff
+        self.job_id = job_id
+
+
 def require_text(payload, name):
     value = payload.get(name)
     if not isinstance(value, str) or not value.strip():

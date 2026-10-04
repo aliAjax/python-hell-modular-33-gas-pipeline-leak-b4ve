@@ -2,7 +2,7 @@ import json
 import mimetypes
 import os
 from http.server import BaseHTTPRequestHandler
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 from .domain import DomainError
 
@@ -41,23 +41,44 @@ def build_handler(service, static_dir):
         def _error(self, exc):
             status = getattr(exc, "status", 500)
             code = getattr(exc, "code", "internal_error")
-            self._send(status, {"error": code, "message": str(exc)})
+            body = {"error": code, "message": str(exc)}
+            for attr in ("current_valves", "diff", "job_id"):
+                if hasattr(exc, attr):
+                    body[attr] = getattr(exc, attr)
+            self._send(status, body)
 
         def do_GET(self):
             try:
-                path = urlparse(self.path).path
+                parsed = urlparse(self.path)
+                path = parsed.path
+                query = parse_qs(parsed.query)
+                parts = [part for part in path.split("/") if part]
                 if path == "/health":
                     return self._send(200, {"status": "ok"})
                 if path == "/api/state":
                     return self._send(200, service.state())
                 if path == "/api/items":
                     return self._send(200, {"items": service.list_items()})
-                parts = [part for part in path.split("/") if part]
+                if parts == ["api", "network"]:
+                    return self._send(200, service.get_network())
+                if parts == ["api", "isolation-jobs"]:
+                    segment_id = query.get("segment_id", [None])[0]
+                    status = query.get("status", [None])[0]
+                    return self._send(200, {"jobs": service.list_isolation_jobs(segment_id, status)})
                 if len(parts) == 3 and parts[:2] == ["api", "items"]:
                     return self._send(200, service.get_item(int(parts[2])))
                 if len(parts) == 4 and parts[:2] == ["api", "items"] and parts[3] == "audit":
                     item = service.get_item(int(parts[2]))
                     return self._send(200, {"events": item["audit"]})
+                if len(parts) == 4 and parts[:2] == ["api", "items"] and parts[3] == "isolation-job":
+                    job = service.get_job_for_item(int(parts[2]))
+                    if job is None:
+                        return self._send(404, {"error": "isolation_job_not_found", "message": "该记录没有隔离作业"})
+                    return self._send(200, job)
+                if len(parts) == 3 and parts[0] == "api" and parts[1] == "valves":
+                    return self._send(200, service.get_valve(parts[2]))
+                if len(parts) == 3 and parts[0] == "api" and parts[1] == "isolation-jobs":
+                    return self._send(200, service.get_isolation_job(int(parts[2])))
                 if path == "/":
                     file_path = os.path.join(static_dir, "index.html")
                     with open(file_path, "rb") as handle:
@@ -78,6 +99,12 @@ def build_handler(service, static_dir):
                 parts = [part for part in path.split("/") if part]
                 if parts == ["api", "items"]:
                     return self._send(201, service.create_item(payload, actor, role, region))
+                if parts == ["api", "network", "segments"]:
+                    return self._send(201, service.upsert_segment(payload, actor, role))
+                if parts == ["api", "network", "valves"]:
+                    return self._send(201, service.upsert_valve(payload, actor, role))
+                if parts == ["api", "network", "connections"]:
+                    return self._send(201, service.upsert_connection(payload, actor, role))
                 if len(parts) == 4 and parts[:2] == ["api", "items"] and parts[3] == "sources":
                     return self._send(201, service.add_source(int(parts[2]), payload, actor, role, region))
                 if len(parts) == 4 and parts[:2] == ["api", "items"] and parts[3] == "actions":
@@ -86,6 +113,10 @@ def build_handler(service, static_dir):
                         raise DomainError("action_required", "缺少 action", 400)
                     expected = payload.pop("expected_version", None)
                     return self._send(200, service.act(int(parts[2]), action, payload, actor, role, expected, region))
+                if len(parts) == 4 and parts[0] == "api" and parts[1] == "valves" and parts[3] == "receipts":
+                    return self._send(201, service.add_valve_receipt(parts[2], payload, actor, role))
+                if len(parts) == 4 and parts[0] == "api" and parts[1] == "isolation-jobs" and parts[3] == "valve-result":
+                    return self._send(200, service.report_valve_result(int(parts[2]), payload, actor, role))
                 return self._send(404, {"error": "not_found", "message": "接口不存在"})
             except DomainError as exc:
                 return self._error(exc)
