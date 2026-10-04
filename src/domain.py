@@ -9,8 +9,9 @@ class DomainError(Exception):
 
 
 class ConflictError(DomainError):
-    def __init__(self, code, message):
+    def __init__(self, code, message, details=None):
         super().__init__(code, message, 409)
+        self.details = details or {}
 
 
 class NotFoundError(DomainError):
@@ -87,3 +88,56 @@ def normalize_source(payload):
         "note": payload.get("note", ""),
     }
     return result
+
+
+def normalize_valve(payload):
+    valve_id = require_text(payload, "valve_id")
+    kind = str(payload.get("kind", "gate")).strip() or "gate"
+    return {"valve_id": valve_id, "kind": kind}
+
+
+def normalize_segment_links(payload, segment_id):
+    """校验管段连接：有序阀门链路，至少两个阀门，相邻阀门不重复。"""
+    sequence = payload.get("valve_sequence")
+    if not isinstance(sequence, list) or len(sequence) < 2:
+        raise DomainError("valve_sequence_required", "管段连接至少需要两个阀门及顺序")
+    cleaned = []
+    for value in sequence:
+        if not isinstance(value, str) or not value.strip():
+            raise DomainError("invalid_valve_sequence", "阀门顺序格式无效")
+        value = value.strip()
+        if cleaned and value == cleaned[-1]:
+            raise DomainError("invalid_valve_sequence", "相邻阀门不能重复: %s" % value)
+        cleaned.append(value)
+    links = []
+    for a, b in zip(cleaned, cleaned[1:]):
+        if a == b:
+            raise DomainError("invalid_valve_sequence", "连接关系不能自环")
+        links.append((a, b))
+    return {"segment_id": segment_id, "sequence": cleaned, "links": links}
+
+
+VALVE_POSITIONS = {"open", "closed"}
+RECEIPT_RESULTS = {"closed", "stuck", "mismatch"}
+
+
+def normalize_receipt(payload):
+    valve_id = require_text(payload, "valve_id")
+    result = require_text(payload, "result")
+    if result not in RECEIPT_RESULTS:
+        raise DomainError("invalid_receipt_result", "回执结果必须是 closed/stuck/mismatch")
+    expected = payload.get("expected_position")
+    if expected is not None and expected not in VALVE_POSITIONS:
+        raise DomainError("invalid_valve_position", "期望阀位必须是 open/closed")
+    reported_position = payload.get("reported_position")
+    if reported_position is not None and reported_position not in VALVE_POSITIONS:
+        raise DomainError("invalid_valve_position", "现场阀位必须是 open/closed")
+    idempotency_key = require_text(payload, "idempotency_key")
+    return {
+        "valve_id": valve_id,
+        "result": result,
+        "expected_position": expected,
+        "reported_position": reported_position,
+        "idempotency_key": idempotency_key,
+        "note": str(payload.get("note", "")),
+    }

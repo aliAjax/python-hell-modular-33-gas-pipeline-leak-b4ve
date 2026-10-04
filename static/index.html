@@ -1,5 +1,12 @@
-<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>燃气管线泄漏响应</title><body><h1>燃气管线泄漏检测与隔离协调</h1><p>使用 JSON API 创建泄漏事件、登记巡检或传感记录，并完成核验、隔离、抢修、试压与恢复。</p><pre>GET /health
-GET /api/state
-POST /api/items
-POST /api/items/{id}/sources
-POST /api/items/{id}/actions</pre></body></html>
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>燃气管线泄漏响应</title><body><h1>燃气管线泄漏检测与隔离协调</h1><p>登记管段拓扑与阀门回执，提交隔离边界并按顺序关阀；阀门卡死或回执不符时从断点恢复、改选相邻阀，已关阀门不重开。</p><pre>POST /api/topology/valves                       登记阀门
+POST /api/segments/{segment}/links              维护管段连接（有序阀门链路）
+POST /api/receipts                              阀门回执（idempotency_key 幂等）
+POST /api/segments/{segment}/isolation-jobs     提交上下游边界（同管段抢边界返回 409+差异）
+POST /api/isolation/jobs/{id}/close             当前待关阀回执（顺序关阀）
+POST /api/isolation/jobs/{id}/resume            断点恢复，改选相邻阀，已关阀保持关闭
+POST /api/isolation/jobs/{id}/recompute         拓扑/阀位更新后重算未执行边界，已关结果保留
+POST /api/isolation/jobs/{id}/abandon           作废作业（不自动重开已关阀）
+GET  /api/isolation/jobs[?segment=&active=1]    作业列表
+GET  /api/isolation/jobs/{id}                   作业详情（含 stale/stale_reasons/diff）
+GET  /api/segments/{segment}/jobs               管段当前活跃作业
+GET  /api/topology  GET /api/receipts</pre></body></html>
